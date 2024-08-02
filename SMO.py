@@ -1,6 +1,5 @@
 import numpy as np
-
-np.random.seed(200)
+import gc 
 
 '''
 Params:
@@ -13,6 +12,7 @@ prog_margin: Margin for determining whether the two langrange multipliers made a
 clip_padding: Padding for clipping the new/optimized multiplier to the bounds 
 '''
 
+
 class SMO_GAUSSIAN():
     def __init__(self, point: np.float64, target: np.float64, M: int, D: int, 
                  c: np.float64=1, tol: np.float64=1e-5, 
@@ -20,29 +20,31 @@ class SMO_GAUSSIAN():
         # Configs
         self.M:              int         = M
         self.D:              int         = D
-        self.point:          np.int32    = point
-        self.target :        np.float64  = target
+        self.point:          np.float64  = point
+        self.target:         np.int32    = target
         self.c:              np.float64  = c
         self.tol:            np.float64  = tol
         self.prog_margin:    np.float64  = prog_margin
         self.clip_padding:   np.float64  = clip_padding
         self.sigma:          int         = 1
-        self.max_iter:       int         = 10000000
+        self.max_iter:       int         = 15_000
         self.log:            bool        = log
 
         # Important Values
-        self.alphs:     np.float64 = np.zeros(shape=(self.M), dtype=np.float64)
-        self.err_cache: np.float64 = np.zeros(shape=(self.M), dtype=np.float64)
-        self.B:         np.float64 = 0
+        self.dot_cache:      np.float64 = np.dot(point, point.T)
+        self.alphs:          np.float64 = np.zeros(shape=(self.M), dtype=np.float64)
+        self.err_cache:      np.float64 = np.zeros(shape=(self.M), dtype=np.float64)
+        self.B:              np.float64 = 0
 
         #self.__initialize_dot_cache()
 
-    def smo_train(self) -> dict:
-        self.__examine_all: bool = True
+    def smo_train(self) -> str:
+        print("starting training...")
+        examine_all: bool = True
         num_changed: int = 0
         total_iter: int = 0
 
-        while num_changed > 0 or self.__examine_all:
+        while num_changed > 0 or examine_all:
             # print("choosing first multiplier")
             if total_iter >= self.max_iter:
                 print("Exceeded max iterations")
@@ -71,20 +73,29 @@ class SMO_GAUSSIAN():
             
             non_bound_alphs = np.array(non_bound_alphs, dtype=np.int32)
 
-            if self.__examine_all:
+            if examine_all:
                 for i in range(self.M):
                     num_changed += self.__examine_a(i, False, non_bound_alphs)
             else:
                 for i in non_bound_alphs:
                     num_changed += self.__examine_a(i, True, non_bound_alphs)
 
-            if self.__examine_all:
-                self.__examine_all = False
+            if examine_all:
+                examine_all = False
             elif num_changed == 0:
-                self.__examine_all = True
+                examine_all = True
 
             total_iter += 1
-    
+
+        self.__delete_caches()
+        return "Done Training"
+
+
+    def __delete_caches(self):
+        print("Deleting caches to save ram")
+        del self.dot_cache
+        del self.err_cache
+        gc.collect()
 
     def __examine_a(self, i2: int, non_bound: bool, non_bound_alphs: np.int64) -> bool:
         non_b_len: int = len(non_bound_alphs)
@@ -129,7 +140,6 @@ class SMO_GAUSSIAN():
         
         # print("already satisfy kkt conditions")
         return 0
-        
 
     def __take_step(self, i1: int, i2: int, non_bound_alphs: np.int64, log: bool=False) -> bool:
         #print(f"Taking step for {i1} and {i2}")
@@ -159,9 +169,9 @@ class SMO_GAUSSIAN():
             #print("L and H equal")
             return 0
         
-        K11: np.float64 = self.__kernel_gaussian(self.point[i1], self.point[i1])
-        K22: np.float64 = self.__kernel_gaussian(self.point[i2], self.point[i2])
-        K12: np.float64 = self.__kernel_gaussian(self.point[i1], self.point[i2])
+        K11: np.float64 = self.__kernel_gaussian(i1, i1)
+        K22: np.float64 = self.__kernel_gaussian(i2, i2)
+        K12: np.float64 = self.__kernel_gaussian(i1, i2)
         eta: np.float64 = K11 + K22 - 2*K12
 
         if (eta > 0):
@@ -174,6 +184,7 @@ class SMO_GAUSSIAN():
             v1: np.float64 = E1 - alph1*y1*K11 - alph2*y2*K12
             v2: np.float64 = E2 - alph1*y1*K12 - alph2*y2*K22
             zeta: np.float64 = alph1*y1 + alph2*y2
+
             Lobj: np.float64 = L*(1-s) + zeta*s*L*K11 - (.05*(L**2)*(K11 + K22)) - (zeta - s*L)*s*L*K12 + (v1 - v2)*y2*L
             Hobj: np.float64 = H*(1-s) + zeta*s*H*K11 - (.05*(H**2)*(K11 + K22)) - (zeta - s*H)*s*H*K12 + (v1 - v2)*y2*H
 
@@ -219,51 +230,42 @@ class SMO_GAUSSIAN():
             if (i == i1 or i == i2):
                 continue
             
-            K1k: np.float64 = self.__kernel_gaussian(self.point[i1], self.point[i])
-            K2k: np.float64 = self.__kernel_gaussian(self.point[i2], self.point[i])
+            K1k: np.float64 = self.__kernel_gaussian(i1, i)
+            K2k: np.float64 = self.__kernel_gaussian(i2, i)
 
             self.err_cache[i] += y1*K1k*(alph1_new - alph1) + y2*K2k*(alph2_new - alph2) + (self.B - b)
         
         return 1
 
+
+    # computes error of the current alphs relative to a given test data
     def __compute_svm_err(self, x: int) -> np.float64:
-        fx: np.float64 = self.__obj_x(self.point[x])
+        fx: np.float64 = self.__obj_x_train(x)
         self.err_cache[x] = fx - self.target[x]
         return self.err_cache[x]     
 
 
-    def __obj_x(self,val: np.float64) -> np.float64:
-        fx: np.float64 = (self.alphs * self.target) @ self.__kernel_gaussian(self.point, val) + self.B
+    # can only compute obj value of data inside training set
+    def __obj_x_train(self, idx: int) -> np.float64:
+        fast: np.float64 = (np.diag(self.dot_cache) - 2 * self.dot_cache[idx] + self.dot_cache[idx, idx])
+        fx: np.float64 = np.dot((self.alphs * self.target), np.exp(-fast/(2 * self.sigma ** 2))) + self.B
         return fx
-
-
-    def __kernel_gaussian(self, x1, x2):
-        if np.ndim(x1) == 1 and np.ndim(x2) == 1:
-            return np.exp(-(np.linalg.norm(x1-x2,2))**2/(2*self.sigma**2))
-        elif(np.ndim(x1)>1 and np.ndim(x2) == 1) or (np.ndim(x1) == 1 and np.ndim(x2)>1):
-            return np.exp(-(np.linalg.norm(x1-x2, 2, axis=1)**2)/(2*self.sigma**2))
-        elif np.ndim(x1) > 1 and np.ndim(x2) > 1 :
-            return np.exp(-(np.linalg.norm(x1[:, np.newaxis] \
-                             - x2[np.newaxis, :], 2, axis = 2) ** 2)/(2*self.sigma**2))
-        
-        return 0.
     
 
+    # computes kernel gaussian of data that exist inside training set
+    def __kernel_gaussian(self, i1, i2):
+        return np.exp(-(self.dot_cache[i1, i1] - 2*self.dot_cache[i1, i2] + self.dot_cache[i2, i2])/(2 * self.sigma ** 2))
+    
+
+    # compute accuracy of model in training set
     def accuracy(self) -> np.float64:
-        correct: float = 0.0
+        correct: int = 0
 
         for i in range(self.M):
-            fx: np.float64 = self.__obj_x(self.point[i])
-            correct += (self.target[i] * fx > 0)
+            if (i % 100 == 0):
+                print("computing accuracy for: ", i)
+
+            fx: np.float64 = self.__obj_x_train(i)
+            correct += ((fx >= 0) if self.target[i] == 1 else (fx < 0))
         
         return correct / self.M
-
-
-    def predict(self, x: np.float64, new: bool = False) -> np.float64:
-        res: np.float64 = np.zeros(shape=(len(x)), dtype=np.float64)
-
-        for i in range(len(x)):
-            fx: np.float64 = self.__obj_x(x[i])
-            res[i] = fx
-        
-        return res
