@@ -5,7 +5,7 @@ import concurrent.futures
 import os
 
 # data len
-data_train_len = 1_000
+data_train_len = 100
 #data_test_len  = 1_000
 
 # paths
@@ -15,7 +15,7 @@ stop_words_path = os.path.join(base_dir, "stop_words_english.txt")
 storage_path = os.path.join(base_dir, "parameters.npz")
 
 # for words to consider
-max_words_to_consider: int = 10
+max_words_to_consider: int = 50
 max_word_len:          int = 15
 words_to_consider: dict = {}
 stop_words:        dict = {}
@@ -112,36 +112,36 @@ if __name__ == "__main__":
 
     print("Conversion complete...")
     print("Total words to consider: ", len(words_to_consider))
-    print(words_to_consider)
 
 
     # ====> train dataset 
     class_pairs: list = []
     target: np.float64 = np.concatenate((np.full(shape=data_train_len, fill_value=1), np.full(shape=data_train_len, fill_value=-1)), axis=0)
 
-    # Loop through all the pairs and create a class
-    for i in range(total_class):
-        for j in range(i + 1, total_class):
-            class_pairs.append(SMO_GAUSSIAN(np.concatenate((v_train[0], v_train[1]), axis=0),
-                                            target, data_train_len*2, max_words_to_consider, c=.5, log=False))
-        
-    # Train in Parallel
-    with concurrent.futures.ProcessPoolExecutor() as executor:
-        processes = [executor.submit(cp.smo_train) for cp in class_pairs]
-
-        for f in concurrent.futures.as_completed(processes):
-            print(f.result())
-
-
-    # ====> Save progress
+    # Train in Parallel (division at a time)
+    # divisions should divide total classes to int
     alpha_res: np.float64 = np.zeros(shape=(total_pairs, data_train_len*2), dtype=np.float64)
     beta_res : np.float64 = np.zeros(shape=(total_pairs), dtype=np.float64)
 
-    for i in range(total_pairs):
-        alpha_res[i] = class_pairs[i].alphs
-        beta_res[i]  = class_pairs[i].B
+    divisions: int = 2
+    chunk:     int = int(total_pairs/divisions)
+    
+    for i in range(divisions):
+        # initialize the classes chunk at a time
+        for _ in range(chunk):
+            class_pairs.append(SMO_GAUSSIAN(np.concatenate((v_train[0], v_train[1]), axis=0),
+                                            target, data_train_len*2, max_words_to_consider, c=1, log=False))
+            
+        with concurrent.futures.ProcessPoolExecutor() as executor:
+            processes = [executor.submit(class_pairs[i].smo_train, i) for i in range(chunk*i, chunk*(i + 1))]
 
-    # save
+            for f in concurrent.futures.as_completed(processes):
+                idx, alphs, B = f.result()
+                alpha_res[idx], beta_res[idx] = alphs, B
+                print("Finished training for pair: ", idx)
+                
+
+    # ====> save
     print("saving parameters...")
     np.savez_compressed(storage_path, alpha_pairs=alpha_res, betas=beta_res)
     print("save complete")

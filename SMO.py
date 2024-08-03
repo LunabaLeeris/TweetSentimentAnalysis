@@ -38,7 +38,7 @@ class SMO_GAUSSIAN():
 
         #self.__initialize_dot_cache()
 
-    def smo_train(self) -> str:
+    def smo_train(self, queue_position: int) -> str:
         print("starting training...")
         examine_all: bool = True
         num_changed: int = 0
@@ -48,7 +48,7 @@ class SMO_GAUSSIAN():
             # print("choosing first multiplier")
             if total_iter >= self.max_iter:
                 print("Exceeded max iterations")
-                return
+                return (i, self.alphs, self.B)
         
             if self.log and total_iter%2 == 0:
                 print("total iterations: ", total_iter)
@@ -88,7 +88,7 @@ class SMO_GAUSSIAN():
             total_iter += 1
 
         self.__delete_caches()
-        return "Done Training"
+        return (queue_position, self.alphs, self.B)
 
 
     def __delete_caches(self):
