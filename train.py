@@ -3,9 +3,10 @@ import re
 from SMO import SMO_GAUSSIAN
 import concurrent.futures
 import os
+import time
 
 # data len
-data_train_len = 100
+data_train_len = 5_000
 #data_test_len  = 1_000
 
 # paths
@@ -15,7 +16,7 @@ stop_words_path = os.path.join(base_dir, "stop_words_english.txt")
 storage_path = os.path.join(base_dir, "parameters.npz")
 
 # for words to consider
-max_words_to_consider: int = 50
+max_words_to_consider: int = 15_000
 max_word_len:          int = 15
 words_to_consider: dict = {}
 stop_words:        dict = {}
@@ -115,6 +116,7 @@ if __name__ == "__main__":
 
 
     # ====> train dataset 
+    start = time.time()
     class_pairs: list = []
     target: np.float64 = np.concatenate((np.full(shape=data_train_len, fill_value=1), np.full(shape=data_train_len, fill_value=-1)), axis=0)
 
@@ -130,7 +132,7 @@ if __name__ == "__main__":
         # initialize the classes chunk at a time
         for _ in range(chunk):
             class_pairs.append(SMO_GAUSSIAN(np.concatenate((v_train[0], v_train[1]), axis=0),
-                                            target, data_train_len*2, max_words_to_consider, c=1, log=False))
+                                            target, data_train_len*2, max_words_to_consider, c=.7, log=False))
             
         with concurrent.futures.ProcessPoolExecutor() as executor:
             processes = [executor.submit(class_pairs[i].smo_train, i) for i in range(chunk*i, chunk*(i + 1))]
@@ -139,8 +141,9 @@ if __name__ == "__main__":
                 idx, alphs, B = f.result()
                 alpha_res[idx], beta_res[idx] = alphs, B
                 print("Finished training for pair: ", idx)
-                
-
+    
+    print("Total Runtime: ", time.time() - start)
+    
     # ====> save
     print("saving parameters...")
     np.savez_compressed(storage_path, alpha_pairs=alpha_res, betas=beta_res)

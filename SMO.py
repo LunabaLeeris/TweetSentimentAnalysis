@@ -48,7 +48,7 @@ class SMO_GAUSSIAN():
             # print("choosing first multiplier")
             if total_iter >= self.max_iter:
                 print("Exceeded max iterations")
-                return (i, self.alphs, self.B)
+                return (queue_position, self.alphs, self.B)
         
             if self.log and total_iter%2 == 0:
                 print("total iterations: ", total_iter)
